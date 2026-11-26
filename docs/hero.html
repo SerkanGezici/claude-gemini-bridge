@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#F5F3EE; --ink:#1B1B19; --muted:#73706A;
+    --coral:#C2410C; --coral-soft:#FBEAE0; --coral-line:#EBC8B4;
+    --blue:#1D4ED8; --blue-soft:#E4ECFC; --blue-line:#C2D4F6;
+    --neutral:#2B2A28; --card:#FFFFFF; --hair:#E6E2D9;
+    --mono:"IBM Plex Mono",ui-monospace,monospace;
+    --sans:"IBM Plex Sans",-apple-system,system-ui,sans-serif;
+    --disp:"Archivo","IBM Plex Sans",sans-serif;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{width:1280px;height:680px}
+  body{
+    font-family:var(--sans); color:var(--ink); background:var(--paper);
+    -webkit-font-smoothing:antialiased; overflow:hidden;
+    background-image:radial-gradient(var(--hair) 1px, transparent 1px);
+    background-size:26px 26px;
+  }
+  .hero{position:relative; width:1280px; height:680px; padding:50px 64px 36px}
+  .topbar{position:absolute; top:0; left:0; right:0; height:6px;
+    background:linear-gradient(90deg,var(--coral) 0%,#A8567C 50%,var(--blue) 100%)}
+
+  /* header */
+  .kicker{font-family:var(--mono); font-weight:600; font-size:12.5px; letter-spacing:3px;
+    color:var(--muted); text-transform:uppercase; margin-bottom:14px}
+  .kicker b{color:var(--coral)} .kicker i{font-style:normal;color:var(--blue)}
+  h1{font-family:var(--disp); font-weight:800; font-size:54px; letter-spacing:-1.5px; line-height:1}
+  h1 .c{color:var(--coral)} h1 .g{color:var(--blue)} h1 .d{color:var(--ink)}
+  .sub{margin-top:12px; font-size:18px; font-weight:500; color:#454340; letter-spacing:-.2px}
+  .sub b{color:var(--ink);font-weight:600}
+
+  /* flow */
+  .flow{display:flex; align-items:stretch; gap:0; margin-top:40px}
+  .card{flex:1; background:var(--card); border:1px solid var(--hair); border-radius:16px;
+    padding:18px 16px 16px; box-shadow:0 1px 0 rgba(27,27,25,.04),0 10px 24px -16px rgba(27,27,25,.28);
+    position:relative; display:flex; flex-direction:column; min-height:188px}
+  .card .num{position:absolute; top:-13px; left:16px; width:28px; height:28px; border-radius:50%;
+    display:flex; align-items:center; justify-content:center; color:#fff; font-family:var(--disp);
+    font-weight:700; font-size:14px; box-shadow:0 4px 10px -3px rgba(27,27,25,.45)}
+  .ic{width:30px;height:30px;margin:12px 0 14px;stroke-width:1.75;fill:none;stroke-linecap:round;stroke-linejoin:round}
+  .card h3{font-family:var(--disp); font-weight:700; font-size:16.5px; letter-spacing:-.3px; margin-bottom:7px}
+  .card p{font-family:var(--mono); font-size:11px; line-height:1.5; color:var(--muted)}
+  .card p b{color:#403e3a;font-weight:600}
+  /* side tinting */
+  .c-coral .num{background:var(--coral)} .c-coral .ic{stroke:var(--coral)} .c-coral{border-color:var(--coral-line)}
+  .c-blue  .num{background:var(--blue)}  .c-blue  .ic{stroke:var(--blue)}  .c-blue{border-color:var(--blue-line)}
+  .c-ink   .num{background:var(--neutral)} .c-ink .ic{stroke:var(--neutral)}
+
+  .conn{flex:0 0 46px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px}
+  .conn .tag{font-family:var(--mono); font-size:9.5px; font-weight:600; letter-spacing:.5px;
+    color:var(--muted); background:var(--paper); border:1px solid var(--hair); border-radius:6px; padding:2px 6px}
+  .conn svg{width:22px;height:22px;stroke:#B9B4A8;stroke-width:2;fill:none;stroke-linecap:round;stroke-linejoin:round}
+
+  /* lane */
+  .lane{margin-top:38px; border:1px solid var(--hair); border-radius:18px; background:#FBFAF7;
+    padding:18px 22px; display:flex; align-items:center; gap:22px}
+  .lane .lab{flex:0 0 130px}
+  .lane .lab .t{font-family:var(--disp); font-weight:700; font-size:15px; letter-spacing:-.2px}
+  .lane .lab .s{font-family:var(--mono); font-size:10px; color:var(--muted); margin-top:3px; line-height:1.4}
+  .pills{flex:1; display:flex; gap:10px}
+  .pill{flex:1; background:#fff; border:1px solid var(--hair); border-radius:12px; padding:12px 12px;
+    display:flex; flex-direction:column; gap:8px; box-shadow:0 6px 16px -14px rgba(27,27,25,.35)}
+  .pill svg{width:21px;height:21px;stroke-width:1.8;fill:none;stroke-linecap:round;stroke-linejoin:round;stroke:var(--neutral)}
+  .pill:nth-child(odd) svg{stroke:var(--coral)} .pill:nth-child(even) svg{stroke:var(--blue)}
+  .pill span{font-family:var(--sans); font-weight:600; font-size:12px; line-height:1.25; letter-spacing:-.2px; color:#2a2926}
+  .pill small{font-family:var(--mono); font-size:9.5px; color:var(--muted)}
+
+  /* footer */
+  .foot{position:absolute; left:64px; right:64px; bottom:18px; display:flex; justify-content:space-between;
+    align-items:center; font-family:var(--mono); font-size:11px; color:var(--muted)}
+  .foot .badge{border:1px solid var(--hair); border-radius:6px; padding:3px 9px; background:#fff}
+  .foot .dot{color:var(--coral)}
+</style>
+</head>
+<body>
+<div class="hero">
+  <div class="topbar"></div>
+
+  <div class="kicker"><b>ANTHROPIC</b> &#8596; <i>GOOGLE</i> &nbsp;·&nbsp; LOCAL BRIDGE</div>
+  <h1><span class="c">claude</span><span class="d">-</span><span class="g">gemini</span><span class="d">-bridge</span></h1>
+  <div class="sub">Run <b>Claude Code</b> on <b>Google Gemini</b> — Live API. Same TUI, tools &amp; plan mode; answers from Gemini.</div>
+
+  <div class="flow">
+    <div class="card c-coral">
+      <div class="num">1</div>
+      <svg class="ic" viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+      <h3>Claude Code</h3>
+      <p>Terminal UI sends the <b>Anthropic Messages API</b> over HTTP</p>
+    </div>
+
+    <div class="conn"><span class="tag">HTTP</span>
+      <svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg></div>
+
+    <div class="card c-coral">
+      <div class="num">2</div>
+      <svg class="ic" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="8" rx="2"/><rect x="2" y="13" width="20" height="8" rx="2"/><line x1="6" y1="7" x2="6.01" y2="7"/><line x1="6" y1="17" x2="6.01" y2="17"/></svg>
+      <h3>Bridge</h3>
+      <p>Fastify <b>:8002</b> · auth via <b>BRIDGE_TOKEN</b></p>
+    </div>
+
+    <div class="conn"><span class="tag">MAP</span>
+      <svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg></div>
+
+    <div class="card c-ink">
+      <div class="num">3</div>
+      <svg class="ic" viewBox="0 0 24 24"><path d="m16 3 4 4-4 4"/><path d="M20 7H4"/><path d="m8 21-4-4 4-4"/><path d="M4 17h16"/></svg>
+      <h3>Transform</h3>
+      <p>Messages API &#8594; <b>Gemini Live</b> protocol</p>
+    </div>
+
+    <div class="conn"><span class="tag">WS</span>
+      <svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg></div>
+
+    <div class="card c-blue">
+      <div class="num">4</div>
+      <svg class="ic" viewBox="0 0 24 24"><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2a6 6 0 0 1 0-8.5"/><circle cx="12" cy="12" r="2"/><path d="M16.2 7.8a6 6 0 0 1 0 8.5"/><path d="M19.1 4.9C23 8.8 23 15.1 19.1 19"/></svg>
+      <h3>Gemini Live API</h3>
+      <p>WebSocket <b>BidiGenerateContent</b></p>
+    </div>
+
+    <div class="conn"><span class="tag">SSE</span>
+      <svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg></div>
+
+    <div class="card c-blue">
+      <div class="num">5</div>
+      <svg class="ic" viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      <h3>Stream back</h3>
+      <p>Output <b>transcription</b> &#8594; SSE to Claude Code</p>
+    </div>
+  </div>
+
+  <div class="lane">
+    <div class="lab"><div class="t">Built-in</div><div class="s">resilience &amp; capabilities</div></div>
+    <div class="pills">
+      <div class="pill">
+        <svg viewBox="0 0 24 24"><path d="M2.6 17.4A2 2 0 0 0 2 18.8V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.2a2 2 0 0 0 1.4-.6l.8-.8a6.5 6.5 0 1 0-4-4z"/><circle cx="16.5" cy="7.5" r=".6"/></svg>
+        <span>First-run key setup</span><small>paste &amp; validate</small>
+      </div>
+      <div class="pill">
+        <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.7 9.7 0 0 1 6.7 2.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.7 9.7 0 0 1-6.7-2.7L3 16"/><path d="M3 21v-5h5"/></svg>
+        <span>Quota fallback</span><small>3.1 &#8596; 2.5</small>
+      </div>
+      <div class="pill">
+        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        <span>Real-time web search</span><small>googleSearch grounding</small>
+      </div>
+      <div class="pill">
+        <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.7 9.7 0 0 0-6.7 2.7L3 8"/><path d="M3 3v5h5"/></svg>
+        <span>Empty-turn resilience</span><small>auto retry</small>
+      </div>
+      <div class="pill">
+        <svg viewBox="0 0 24 24"><path d="M12 22v-5"/><path d="M9 7V2"/><path d="M15 7V2"/><path d="M18 7v6a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V7Z"/></svg>
+        <span>Persistent tool session</span><small>sendToolResponse</small>
+      </div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <div>Unofficial &#183; not affiliated with Anthropic or Google</div>
+    <div><span class="badge">MIT</span> &nbsp; <span class="badge">Node &#8805; 20</span> &nbsp; <span class="dot">&#9679;</span> open source</div>
+  </div>
+</div>
+</body>
+</html>

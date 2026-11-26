@@ -1,0 +1,10 @@
+{
+  "gemini-sdk": [],
+  "config-env": [
+    "src/index.ts",
+    "src/limit-registry.ts",
+    "src/logger.ts",
+    "src/onboarding.ts"
+  ],
+  "no-test-import": []
+}

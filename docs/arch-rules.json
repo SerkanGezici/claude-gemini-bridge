@@ -1,0 +1,26 @@
+{
+  "_doc": "ARCH-0: mimari kurallar. tools/arch-guard.py denetler. Baseline (docs/arch-baseline.json) yalnız azalır; kural/baseline gevşetmek Serkan kararı + ADR ister.",
+  "rules": [
+    {
+      "id": "gemini-sdk",
+      "description": "@google/genai yalnız gemini-client.ts (getAI) ve reviewer.ts'te import edilir; diğer modüller getAI() kullanır (tek dış servis sınırı).",
+      "files": "src/**/*.ts",
+      "pattern": "from ['\"]@google/genai['\"]",
+      "allow": ["src/gemini-client.ts", "src/reviewer.ts"]
+    },
+    {
+      "id": "config-env",
+      "description": "Ortam değişkeni yalnız config.ts'te okunur; yeni ayar = BridgeConfig alanı + kapatma anahtarı (ARCHITECTURE 'Model şeritleri').",
+      "files": "src/**/*.ts",
+      "pattern": "process\\.env\\[",
+      "allow": ["src/config.ts"]
+    },
+    {
+      "id": "no-test-import",
+      "description": "Üretim kodu (src/) test kodundan import etmez.",
+      "files": "src/**/*.ts",
+      "pattern": "from ['\"][./]*tests/",
+      "allow": []
+    }
+  ]
+}

@@ -1,0 +1,68 @@
+{
+  "name": "claude-gemini-bridge",
+  "version": "0.2.0",
+  "description": "Local bridge that runs the Claude Code CLI on top of Google's Gemini Live API instead of Anthropic.",
+  "type": "module",
+  "bin": {
+    "claude-gemini": "bin/claude-gemini.mjs"
+  },
+  "files": [
+    "dist/",
+    "assets/",
+    "bin/",
+    "README.md",
+    "README.tr.md",
+    "LICENSE",
+    ".env.example"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "bridge": "tsx src/index.ts --bridge-only",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:e2e": "tsx tests/e2e-runner.ts",
+    "eval": "tsx tests/eval/run-eval.ts",
+    "arch": "python3 tools/arch-guard.py",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "gemini",
+    "gemini-live",
+    "anthropic",
+    "google-genai",
+    "llm",
+    "cli",
+    "bridge",
+    "proxy"
+  ],
+  "author": "Serkan Gezici (https://github.com/SerkanGezici)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SerkanGezici/claude-gemini-bridge.git"
+  },
+  "homepage": "https://github.com/SerkanGezici/claude-gemini-bridge#readme",
+  "bugs": {
+    "url": "https://github.com/SerkanGezici/claude-gemini-bridge/issues"
+  },
+  "dependencies": {
+    "@google/genai": "1.44.0",
+    "dotenv": "^16.6.1",
+    "fastify": "^5.8.2",
+    "pureimage": "0.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.15",
+    "@vitest/coverage-v8": "^3.2.4",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}

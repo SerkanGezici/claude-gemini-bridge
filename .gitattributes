@@ -1,0 +1,3 @@
+# Not exported to the public repo (tools/export-public.sh uses git archive)
+PLANS/ export-ignore
+tests/eval/results/ export-ignore

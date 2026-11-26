@@ -1,0 +1,18 @@
+{
+  "appName": "DemoPanel",
+  "version": "1.4.0",
+  "debug": false,
+  "maxConnections": 100,
+  "features": {
+    "darkMode": true,
+    "betaSearch": false,
+    "export": [
+      "pdf",
+      "xlsx"
+    ]
+  },
+  "owner": {
+    "name": "Deniz Aksoy",
+    "email": "owner@example.com"
+  }
+}

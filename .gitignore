@@ -1,0 +1,33 @@
+# Bağımlılıklar
+node_modules/
+
+# Secrets — ASLA commit etme
+.env
+.env.*
+!.env.example
+
+# Loglar ve runtime çıktıları
+logs/
+*.log
+coverage/
+
+# Build çıktısı — dist/ PREBUILT olarak COMMIT edilir.
+# Sebep: npm 'github:' git-install prepare-build'de bağımlılıkları kurmadan
+# tsc çağırıyor ('tsc: not found') → prepare-build güvenilmez. Bu yüzden dist/
+# repoya dahil edilir; git-install build gerektirmeden çalışır.
+.ruff_cache/
+*.tgz
+
+# Eski iterasyon artıkları / yerel yedekler
+recovered/
+firebase-debug.log
+organize_downloads.py
+
+# Python (tests/workspace fixture üreticisi artıkları)
+__pycache__/
+*.pyc
+
+# Editor/OS
+.DS_Store
+*.swp
+archive/

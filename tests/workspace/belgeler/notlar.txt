@@ -1,0 +1,14 @@
+TOPLANTI NOTLARI — 18 Haziran 2026
+================================
+
+Katılımcılar: Deniz, Ayşe, Mehmet, Zeynep
+
+Gündem:
+1. Q3 bütçe revizyonu (öncelik: yüksek)
+2. Yeni işe alım — 2 backend, 1 tasarımcı
+3. Müşteri şikayetleri azaldı (geçen aya göre %32)
+
+Kararlar:
+- Bütçe onayı 25 Haziran'a ertelendi.
+- İşe alım ilanları bu hafta yayınlanacak.
+- Gizli kod: PELIKAN-77

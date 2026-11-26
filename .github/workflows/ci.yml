@@ -1,0 +1,85 @@
+name: CI
+
+# pull_request tetiği yok: ücretsiz planda Actions dakikası tüm private repolarda ortak ve dal koruması
+# yok; PR + birleşme aynı değişikliği iki kez koşuyordu. Üst üste push'ta yalnız en yenisi koşar.
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js ${{ matrix.node }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check
+        run: npm run typecheck
+
+      # ARCH-0: mimari kapı (docs/arch-rules.json + baseline). Yeni ihlal = kırmızı.
+      - name: Architecture guard (ARCH-0)
+        run: python3 tools/arch-guard.py
+
+      - name: Unit tests
+        run: npm test
+
+      # DIST-DRIFT guard: dist/ prebuilt commit'li (INSTALL-1 dağıtım modeli).
+      # Kod değişip dist/ commit edilmezse release tarball'ı eskir — burada yakala.
+      # git diff yeni (untracked) dist dosyalarını görmez → status --porcelain şart.
+      - name: dist/ drift check (DIST-DRIFT)
+        run: |
+          npm run build
+          if [ -n "$(git status --porcelain dist/)" ]; then
+            git status --porcelain dist/
+            echo "::error::dist/ eski — 'npm run build' çalıştırıp dist/ değişikliklerini commit edin."
+            exit 1
+          fi
+
+  # RELEASE-7: main'e her push'ta package.json sürümünün release tarball'ı tazelenir —
+  # davet edilen kullanıcıların 'gh release download' yolu hep güncel kalır. Etiket sabit yazılmaz:
+  # v0.1.0 silinince sabit etiket her push'ta "release not found" ile düşüyordu.
+  refresh-release:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Pack tarball
+        run: npm pack
+
+      # Versioned asset + a stable name so README's one-command install
+      # (releases/latest/download/claude-gemini-bridge.tgz) always gets the newest build.
+      - name: Upload to release (create on version bump, clobber)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V="v$(node -p "require('./package.json').version")"
+          cp claude-gemini-bridge-*.tgz claude-gemini-bridge.tgz
+          gh release view "$V" >/dev/null 2>&1 || gh release create "$V" --title "$V" --notes "See CHANGELOG.md"
+          gh release upload "$V" claude-gemini-bridge-*.tgz claude-gemini-bridge.tgz --clobber
