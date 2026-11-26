@@ -31,5 +31,11 @@ jobs:
           claude --version
           claude-gemini --help
 
+      - name: Python versions (Windows diagnostics)
+        if: runner.os == 'Windows'
+        run: |
+          py -0p
+          py -3 -c "import sys, sysconfig; print(sys.version, sysconfig.get_platform(), sysconfig.get_config_var('Py_GIL_DISABLED'))"
+
       - name: Document tools (--setup-docs)
         run: claude-gemini --setup-docs
