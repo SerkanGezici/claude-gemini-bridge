@@ -1,0 +1,35 @@
+# Installs the published release exactly as README's one-command install does, on
+# Linux, macOS and Windows, then checks the CLI starts and the document tools set up.
+name: Install smoke
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+jobs:
+  install:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: One-command install (README)
+        run: npm install -g @anthropic-ai/claude-code https://github.com/SerkanGezici/claude-gemini-bridge/releases/latest/download/claude-gemini-bridge.tgz
+
+      - name: CLI starts
+        run: |
+          claude --version
+          claude-gemini --help
+
+      - name: Document tools (--setup-docs)
+        run: claude-gemini --setup-docs
