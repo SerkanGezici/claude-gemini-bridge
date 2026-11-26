@@ -44,7 +44,7 @@ describe('buildGeminiToolResponses cap (CAP-1)', () => {
       { type: 'tool_result', tool_use_id: 'toolu_a', content },
     ]);
     const text = resultOf(out);
-    expect(text).toContain('SECRET_KOD=PELIKAN-9931-ZUMRUT'); // offset 9000 hâlâ görünür
+    expect(text).toContain('SECRET_KOD=PELIKAN-9931-ZUMRUT'); // offset 9000 hâlâ görünür gitleaks:allow (sahte test değeri)
     expect(text).not.toContain('truncated');
   });
 

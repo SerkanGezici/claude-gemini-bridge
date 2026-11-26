@@ -3,7 +3,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { resetConfig } from '../../src/config.js';
 
-// ARCH-0: anahtarlar config'ten okunur — her testte temiz config.
+// ARCH-0: anahtarlar config'ten okunur — her testte temiz config. Modül düzeyindeki MERGED_APPEND
+// de config okur; anahtarsız CI'da (kayıtlı ~/.config anahtarı yok) beforeEach'ten önce gerekir.
+process.env['GEMINI_API_KEY'] ??= 'test-key';
 beforeEach(() => { process.env['GEMINI_API_KEY'] ??= 'test-key'; resetConfig(); });
 afterEach(() => { delete process.env['BRIDGE_CHROME_MCP']; delete process.env['BRIDGE_COMPUTER_USE']; resetConfig(); });
 import { buildClaudeArgs, TOOL_RECOVERY_PROMPT, SKILL_GUARD_PROMPT, BROWSER_GUIDE_PROMPT, DESKTOP_GUIDE_PROMPT, COMPUTER_GUIDE_PROMPT, OFFICE_EDIT_PROMPT, computerUseAvailable, officeToolsAvailable, officeToolsPrompt, officeHooks, bridgeMcpConfig } from '../../src/claude-args.js';
