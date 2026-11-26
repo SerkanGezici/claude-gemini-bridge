@@ -6,6 +6,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-26
+
+### Fixed
+- `--setup-docs` on Windows picked the newest Python via `py -3` (e.g. 3.15), for which the pinned packages have no wheels ("No matching distribution found for onnxruntime"). It now prefers Python 3.13 → 3.12 → 3.11 → 3.14 and prints the version it uses.
+
+### Added
+- Install smoke workflow: README's one-command install, `--help` and `--setup-docs` on Linux, macOS and Windows.
+
 ## [0.2.0] - 2026-11-26
 
 ### Added

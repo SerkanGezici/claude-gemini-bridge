@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { DOCENV_REQUIREMENTS, docenvReady, systemPythonCandidates } from '../../src/docenv.js';
+import { DOCENV_REQUIREMENTS, docenvReady, pythonSupported, systemPythonCandidates } from '../../src/docenv.js';
 import { docenvPython } from '../../src/paths.js';
 
 function fakeEnv(marker?: string): string {
@@ -34,20 +34,33 @@ describe('docenvReady', () => {
 });
 
 describe('systemPythonCandidates', () => {
-  it('Linux/WSL: python3', () => {
-    expect(systemPythonCandidates('linux', '/home/x')).toEqual([['python3', []]]);
+  it('Linux/macOS: önce desteklenen sürüm adları, en son python3', () => {
+    const c = systemPythonCandidates('linux', '/home/x').map(([cmd]) => cmd);
+    expect(c[0]).toBe('python3.13');
+    expect(c[c.length - 1]).toBe('python3');
   });
-  it('Windows: önce py -3, sonra kurulu Python3xx (en yeni önce), en son PATH python', () => {
+  it('Windows: önce py -3.13/-3.12/-3.11, sonra kurulu Python3xx (en yeni önce), py -3, en son PATH python', () => {
     const home = mkdtempSync(join(tmpdir(), 'winhome-'));
     for (const v of ['Python311', 'Python313']) {
       const d = join(home, 'AppData', 'Local', 'Programs', 'Python', v);
       mkdirSync(d, { recursive: true });
       writeFileSync(join(d, 'python.exe'), '');
     }
-    const c = systemPythonCandidates('win32', home).map(([cmd]) => cmd);
-    expect(c[0]).toBe('py');
-    expect(c[1]).toContain('Python313');
-    expect(c[2]).toContain('Python311');
+    const c = systemPythonCandidates('win32', home).map(([cmd, pre]) => [cmd, ...pre].join(' '));
+    expect(c.slice(0, 3)).toEqual(['py -3.13', 'py -3.12', 'py -3.11']);
+    const i313 = c.findIndex((x) => x.includes('Python313'));
+    expect(i313).toBeGreaterThan(3);
+    expect(c[i313 + 1]).toContain('Python311');
+    expect(c.indexOf('py -3')).toBeGreaterThan(i313);
     expect(c[c.length - 1]).toBe('python');
+  });
+});
+
+describe('pythonSupported', () => {
+  it('sabit paketlerin tekerleği olan sürümler kabul, diğerleri ret', () => {
+    expect(pythonSupported('3.12')).toBe(true);
+    expect(pythonSupported('3.14\r\n')).toBe(true);
+    expect(pythonSupported('3.10')).toBe(false);
+    expect(pythonSupported('3.15')).toBe(false);
   });
 });

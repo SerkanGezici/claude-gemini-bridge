@@ -1,6 +1,6 @@
 {
   "name": "claude-gemini-bridge",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Local bridge that runs the Claude Code CLI on top of Google's Gemini Live API instead of Anthropic.",
   "type": "module",
   "bin": {

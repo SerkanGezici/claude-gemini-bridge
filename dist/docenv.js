@@ -28,11 +28,14 @@ export function docenvReady(dir = DOCENV_DIR) {
 /**
  * venv'i kuracak gerçek Python. Windows'ta `python` çoğu zaman Microsoft Store yönlendiricisi
  * ya da npm `.cmd` sarmalayıcısıdır (2026-11-26: `python` → system32, npm, WindowsApps);
- * sırayla `py -3`, %LOCALAPPDATA%\Programs\Python\Python3* (en yeni), sonra PATH'teki `python`.
+ * `py -3` ise kurulu EN YENİ sürümü seçer ve sabit paketlerin tekerleği olmayan bir sürüme
+ * düşebilir (CI Windows: "No matching distribution found for onnxruntime"). Bu yüzden önce
+ * desteklenen sürümler adıyla (`py -3.13` …), sonra kurulu Python3xx (en yeni), sonra genel adlar.
  */
+export const SUPPORTED_PYTHON = [[3, 13], [3, 12], [3, 11], [3, 14]];
 export function systemPythonCandidates(platform = process.platform, home = homedir()) {
     if (platform !== 'win32')
-        return [['python3', []]];
+        return [...SUPPORTED_PYTHON.map(([a, b]) => [`python${a}.${b}`, []]), ['python3', []]];
     const base = join(home, 'AppData', 'Local', 'Programs', 'Python');
     let installed = [];
     try {
@@ -41,13 +44,20 @@ export function systemPythonCandidates(platform = process.platform, home = homed
             .map((d) => join(base, d, 'python.exe')).filter((p) => existsSync(p));
     }
     catch { /* kurulu değil */ }
-    return [['py', ['-3']], ...installed.map((p) => [p, []]), ['python', []]];
+    return [...SUPPORTED_PYTHON.map(([a, b]) => ['py', [`-${a}.${b}`]]),
+        ...installed.map((p) => [p, []]), ['py', ['-3']], ['python', []]];
+}
+/** "3.12" gibi sürüm desteklenen aralıkta mı (sabit paketlerin tekerleği var mı). */
+export function pythonSupported(version) {
+    const [a, b] = version.trim().split('.').map(Number);
+    return SUPPORTED_PYTHON.some(([x, y]) => x === a && y === b);
 }
 function findSystemPython() {
     for (const [cmd, pre] of systemPythonCandidates()) {
-        const r = spawnSync(cmd, [...pre, '-c', 'import sys, venv; print(sys.executable)'], { encoding: 'utf8' });
-        if (r.status === 0 && r.stdout.trim() && !/WindowsApps/i.test(r.stdout))
-            return [cmd, pre];
+        const r = spawnSync(cmd, [...pre, '-c', 'import sys, venv; print(sys.executable); print("%d.%d" % sys.version_info[:2])'], { encoding: 'utf8' });
+        const [exe = '', ver = ''] = (r.stdout || '').trim().split(/\r?\n/);
+        if (r.status === 0 && exe && !/WindowsApps/i.test(exe) && pythonSupported(ver))
+            return [cmd, pre, ver];
     }
     return null;
 }
@@ -59,9 +69,10 @@ export function setupDocenv(log = console.log, dir = DOCENV_DIR) {
         log(`📄 Creating document tools environment: ${dir}`);
         const sys = findSystemPython();
         if (!sys) {
-            log('✗ No usable Python 3 found (Windows: install from python.org; Ubuntu/Debian: sudo apt install python3-venv).');
+            log('✗ No supported Python found (3.11–3.14 with venv). Windows: install 3.13 from python.org; Ubuntu/Debian: sudo apt install python3-venv.');
             return false;
         }
+        log(`📄 Using Python ${sys[2]} (${[sys[0], ...sys[1]].join(' ')})`);
         const r = spawnSync(sys[0], [...sys[1], '-m', 'venv', dir], { stdio: 'inherit' });
         if (r.status !== 0 || !existsSync(py)) {
             log('✗ Could not create the venv (Ubuntu/Debian: sudo apt install python3-venv).');
