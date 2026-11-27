@@ -105,6 +105,8 @@ export interface GeminiStreamCallbacks {
   onToolCall: (toolCalls: ToolCallInfo[]) => void;
   onTurnComplete: () => void;
   onError: (error: Error) => void;
+  /** SEARCH-LEDGER-1: köprü web_search'ü kendisi karşıladı (Claude Code geçmişinde görünmez). */
+  onWebSearch?: () => void;
 }
 
 export interface StreamParams {
@@ -156,6 +158,8 @@ interface LiveSessionHandle {
   oldTurnWaiter?: () => void;
   /** Bu oturumda yapılan denetim düzeltme turu sayısı (en fazla 1 — döngü önlemi) */
   reviewRounds?: number;
+  /** SEARCH-MIX-1: karışık batch'teki web_search sonuçları — Claude Code'un sonuçlarıyla birlikte gönderilir */
+  pendingSearch?: Promise<Array<{ id: string; name: string; response: Record<string, unknown> }>>;
   /** closeSession çağrıldı mı (kapalı oturuma tur gönderilmez) */
   closed?: boolean;
   /** Düzeltme turunda, yeni içerik gelmeden düşen turnComplete bayattır — yut */
@@ -503,11 +507,15 @@ function onToolCallMessage(handle: LiveSessionHandle, functionCalls: FunctionCal
     void fulfillWebSearch(webSearchCalls, handle);
     return;
   }
+  // SEARCH-MIX-1 (2026-11-27 skill taraması): 3.x `ToolSearch + web_search`'ü sık sık aynı
+  // batch'te çağırıyor; web_search Claude Code'a düşünce "No such tool available: web_search".
+  // Arama köprüde hemen başlar, Claude Code yalnız normal araçları görür; sonuçlar onun
+  // cevabıyla tek toolResponse'ta birleşir (sendToolResponse).
   if (webSearchCalls.length > 0) {
-    logger.warn(
-      `web_search karışık batch'te (${calls.length - webSearchCalls.length} normal tool ile) — ` +
-      'v1: intercept edilmedi, normal akışa bırakıldı',
-    );
+    logger.info(`web_search karışık batch'te (${calls.length - webSearchCalls.length} normal tool ile) — köprüde karşılanıyor`);
+    handle.callbacks.onWebSearch?.();
+    handle.pendingSearch = Promise.all(webSearchCalls.map(async (c) => ({ id: c.id, name: c.name, response: await handleWebSearch(c.args) })));
+    calls.splice(0, calls.length, ...calls.filter((c) => c.name !== 'web_search'));
   }
 
   clearTimeout(handle.timeoutId);
@@ -775,6 +783,9 @@ export async function sendToolResponse(
   if (!handle) {
     throw new Error('No active Gemini session for tool response');
   }
+  const searched = handle.pendingSearch ? await handle.pendingSearch.catch(() => []) : [];
+  handle.pendingSearch = undefined;
+  const allResponses: typeof toolResponses = [...toolResponses, ...searched];
 
   // Yeni HTTP isteğinin callback'lerini ve promise'ini handle'a bağla
   return new Promise<void>((resolve, reject) => {
@@ -810,7 +821,7 @@ export async function sendToolResponse(
 
     try {
       handle.session.sendToolResponse({
-        functionResponses: toolResponses.map((tr) => ({
+        functionResponses: allResponses.map((tr) => ({
           id: tr.id,
           name: tr.name,
           response: tr.response,
@@ -858,6 +869,7 @@ async function fulfillWebSearch(
     response: Record<string, unknown>;
   }> = [];
   for (const c of calls) {
+    handle.callbacks.onWebSearch?.();
     const response = await handleWebSearch(c.args);
     functionResponses.push({ id: c.id, name: c.name, response });
   }

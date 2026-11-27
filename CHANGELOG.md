@@ -6,6 +6,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-11-27
+
+### Fixed
+Found by running every installed skill and plugin through the bridge:
+- A skill requested by name is loaded with the Skill tool, using the exact name: no invented sub-names, no searching for it with ToolSearch.
+- Gemini's `web_search` called together with another tool reached Claude Code as an unknown tool ("No such tool available: web_search"). The bridge now runs it itself and merges the result.
+- Answers claiming a web search or a created file that never happened are caught deterministically, also on the full-replay path and after the reviewer's correction turn. Searches the bridge ran itself count as evidence.
+- A turn that ended with only "Let me check" (or nothing) after a tool result is sent back for one correction turn.
+- `[tool_use: …]` text written by the model is turned into a real tool call on every path.
+- Commit attribution lines no longer leak into plain answers; the browser skill never closes the user's existing tabs.
+
 ## [0.2.1] - 2026-11-26
 
 ### Fixed

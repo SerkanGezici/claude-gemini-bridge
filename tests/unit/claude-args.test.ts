@@ -110,6 +110,27 @@ describe('buildClaudeArgs — SKILL-GUARD-1 metin içeriği', () => {
     expect(SKILL_GUARD_PROMPT.toLowerCase()).toMatch(/codebase|proje/);
     expect(SKILL_GUARD_PROMPT).toMatch(/\.docx|\.pdf|dosya/i);
   });
+  it('ATTR-LEAK-1: settings override commit/PR atfını boşaltır (yanlış Claude atfı ve cevaba sızma)', () => {
+    const out = buildClaudeArgs([]);
+    const s = JSON.parse(out[out.indexOf('--settings') + 1]!) as { attribution?: { commit: string; pr: string } };
+    expect(s.attribution).toEqual({ commit: '', pr: '' });
+  });
+  it('ACT-CLAIM-1: ToolSearch yalnız yükler; yapılmamış işi yapılmış gibi söyleme', () => {
+    expect(SKILL_GUARD_PROMPT).toMatch(/ToolSearch bir aracı yalnız YÜKLER/);
+    expect(SKILL_GUARD_PROMPT).toMatch(/gerçekten\s+'?\s*'?çağırıp/);
+  });
+  it('BROWSER-TAB-1: yalnız kendi açtığı sekmeyle çalışır, kullanıcının sekmesini kapatmaz', () => {
+    expect(BROWSER_GUIDE_PROMPT).toMatch(/DÖNDÜRDÜĞÜ tabId/);
+    expect(BROWSER_GUIDE_PROMPT).toMatch(/ASLA kapatma/);
+  });
+  it('SKILL-EXPLICIT-1: adıyla istenen skill, araçlar doğrudan erişilebilir olsa da önce yüklenir', () => {
+    expect(SKILL_GUARD_PROMPT).toMatch(/ADIYLA/);
+    expect(SKILL_GUARD_PROMPT).toMatch(/ÖNCE `Skill` aracıyla/);
+  });
+  it('SKILL-NAME-1: skill adı birebir verilir, ToolSearch\'te aranmaz', () => {
+    expect(SKILL_GUARD_PROMPT).toMatch(/adı BİREBİR ver/);
+    expect(SKILL_GUARD_PROMPT).toMatch(/ToolSearch\\'te görünmez|ToolSearch'te görünmez/);
+  });
 });
 
 describe('buildClaudeArgs — GAP-SKILL-2 metin içeriği', () => {

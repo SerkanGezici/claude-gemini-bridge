@@ -198,6 +198,25 @@ export const SKILL_GUARD_PROMPT =
   'Selamlaşma, sohbet veya basit bir soruda (ör. "merhaba", "nasılsın", "2+2") ' +
   'HİÇBİR skill yükleme; doğrudan cevap ver. Skill yalnız gerçekten o yeteneği ' +
   'gerektiren açık bir görevde yüklenir. ' +
+  // SKILL-EXPLICIT-1 (2026-11-26 skill taraması): "chrome-browser skill'ini yükle" denince
+  // Gemini skill'i atlayıp doğrudan mcp__chrome araçlarını kullandı; yukarıdaki caydırıcı
+  // kurallar açık isteği kapsamıyordu.
+  'Kullanıcı bir skill\'i ADIYLA istediğinde ("X skill\'ini kullan/yükle", `/X`, `ad:alt-ad`) ' +
+  'yukarıdaki kısıtlar geçmez: işe başlamadan ÖNCE `Skill` aracıyla o skill\'i yükle ve ' +
+  'talimatlarına göre ilerle — aynı işi yapan araçlar doğrudan erişilebilir olsa bile ' +
+  '(ör. tarayıcı skill\'i istendiyse önce skill, sonra mcp__chrome araçları). ' +
+  // SKILL-NAME-1 (2026-11-27): Gemini `firecrawl-cli:scrape` gibi alt-ad uydurdu ya da skill'i
+  // ToolSearch'te arayıp "skill bulunamadı" dedi.
+  'Skill aracının `skill` alanına kullanıcının yazdığı adı BİREBİR ver (alt-ad ya da ön ek uydurma); ' +
+  'skill\'ler ToolSearch\'te görünmez, orada arama. ' +
+  // ACT-CLAIM-1 (2026-11-26 skill taraması, deep-research): Gemini `ToolSearch select:WebSearch`
+  // çağırdı (WebSearch zaten yüklü olduğu için sonuç boş), aramayı hiç yapmadan "web araması
+  // gerçekleştirildi" diye sonuç uydurdu.
+  'ToolSearch bir aracı yalnız YÜKLER, çalıştırmaz: yükledikten sonra aracın kendisini çağır. ' +
+  'WebSearch, WebFetch, Bash, Read, Write, Edit, Skill zaten yüklüdür; onlar için ToolSearch kullanma. ' +
+  'Bir işi (arama, dosya yazma, komut, betik) yaptığını YALNIZ o işi yapan aracı bu turda gerçekten ' +
+  'çağırıp sonucunu gördüysen söyle; sonuç bilgisi yalnız araç çıktısından gelir. Skill bir betik ya da ' +
+  'komut çalıştırmanı söylüyorsa (ör. `python3 scripts/…`), onu Bash ile çalıştır. ' +
   // ANSWER-SHAPE-1: canlı E2E'de 8 cevabın 3'ü tek bilgilik soruya CLAUDE.md'nin
   // uzun-iş rapor başlıklarını ekledi; 1 cevap yalnız ürün kodunu söyledi.
   'Araç sonucundan sonra kullanıcının sorduğu her şeyi sonuçtaki somut değerlerle ' +
@@ -224,6 +243,10 @@ export const BROWSER_GUIDE_PROMPT =
   'Web sayfası açma, okuma, form doldurma, tıklama gibi tarayıcı işlerinde kullanıcının ' +
   'kendi Chrome\'una bağlı `mcp__chrome__*` araçlarını kullan (gerekirse ToolSearch ' +
   'sorgusu: "+chrome tabs"); önce tabs_context_mcp, sonra tabs_create_mcp ile yeni sekme. ' +
+  // BROWSER-TAB-1 (2026-11-26 skill taraması): Gemini example.com'u kullanıcının açık
+  // "Yeni Sekme"sinde açıp o sekmeyi kapattı, kendi açtığı sekmeyi açık bıraktı.
+  'Yalnız tabs_create_mcp\'nin DÖNDÜRDÜĞÜ tabId ile çalış (navigate, okuma, kapatma); kullanıcının ' +
+  'önceden açık sekmelerinde gezinme ve onları ASLA kapatma — boş "Yeni Sekme" bile kullanıcınındır. ' +
   'chrome-devtools ve Playwright ayrı, oturumsuz tarayıcı açar; kullanıcı açıkça istemedikçe kullanma.';
 
 // OFFICE-1 (2026-11-26): Serkan'ın fiyat listesi isteğinde Gemini dosyaya hiç
@@ -305,6 +328,10 @@ export function buildClaudeArgs(args: string[]): string[] {
   const settingsOverride = JSON.stringify({
     enabledPlugins: Object.fromEntries(BRIDGE_DISABLED_PLUGINS.map((p) => [p, false])),
     autoCompactWindow: BRIDGE_AUTO_COMPACT_WINDOW,
+    // ATTR-LEAK-1: Claude Code'un "commit'e Co-Authored-By: Claude … ekle" talimatı Gemini
+    // cevaplarına sızıyordu (skill taraması: google-workspace cevabının sonu). Köprüde yazar
+    // Gemini olduğu için bu atıf zaten yanlış; boş atıf talimatı sistem isteminden kaldırır.
+    attribution: { commit: '', pr: '' },
     modelSettings: Object.fromEntries(
       bridgeModelKeys().map((m) => [m, { autoCompactWindow: BRIDGE_AUTO_COMPACT_WINDOW }]),
     ),

@@ -73,11 +73,113 @@ export function extractReviewInput(messages) {
     }
     if (parts.length === 0)
         return null;
+    if (bridgeSearched(messages))
+        parts.push('[BRIDGE NOTE] The bridge itself ran web_search in this conversation (results are not listed here); do not flag web-search claims as unsupported.');
     let evidence = parts.join('\n\n');
     // Toplam sınır: en yeni kanıt korunur (son okunan dosyalar genelde cevabın temeli).
     if (evidence.length > EVIDENCE_MAX_CHARS)
         evidence = `…[eski kanıt kırpıldı]\n${evidence.slice(-EVIDENCE_MAX_CHARS)}`;
     return { request: req.text, evidence };
+}
+// ACT-CLAIM-1 (2026-11-26 skill taraması): Gemini `deep-research` skill'inde hiç araç
+// çağırmadan "web araması gerçekleştirildi, arama sonuçlarına göre …" diye cevap uydurdu;
+// talimat tek başına yetmedi. Deterministik kontrol: taslak bir eylemi iddia ediyor ama bu
+// görevde o eylemi yapabilecek hiçbir araç çağrılmadıysa sorun üretilir (LLM gerekmez).
+const SEARCH_CLAIM = /web\s*aramas[ıi]|internette\s+(?:ara|yapt)|arama\s+sonu[çc]|aramalar[ıi]?nda\b|yapt[ıi]ğ[ıi]m\s+aramada|araştırma(?:sı)?\s+(?:yapıldı|yaptım|gerçekleştir)|searched\s+(?:the\s+web|online)|search\s+results|web\s+search/i;
+const FILE_CLAIM = /[\w\-./]+\.(?:md|docx|xlsx|pptx|pdf|png|jpe?g|gif|html?|py|js|ts|json|csv|txt|svg)[`'"]?\s*(?:dosyas[ıi]\s*)?(?:olarak\s*)?(?:oluşturuldu|oluşturdum|kaydedildi|kaydettim|yazıldı|yazdım|üretildi|ürettim|hazırlandı|created|saved|written)/i;
+const NEGATED = /yapamad|yapılamad|yapmad|gerekmed|could not|couldn't|did not|didn't|unable/i;
+const SEARCH_TOOLS = /^(?:WebSearch|WebFetch|web_search$|Task|Agent|mcp__chrome__|mcp__chrome-devtools__|mcp__plugin_playwright_)/;
+const WRITE_TOOLS = /^(?:Write|Edit|MultiEdit|NotebookEdit|Bash|Task|Agent|mcp__office__)/;
+const NET_IN_BASH = /\b(?:curl|wget|firecrawl|httpx|requests\.get|research\.py)\b/;
+// SEARCH-LEDGER-1 (2026-11-27): köprü solo/karışık web_search'ü kendisi karşılar; o arama Claude
+// Code'un mesaj geçmişinde HİÇ görünmez. Deterministik kontrol yalnız geçmişe bakınca gerçek
+// aramayı "uydurma" sayıyordu (log: "web_search (live) … → N source(s)"). Bellek içi kayıt:
+// konuşmanın ilk kullanıcı mesajı → son arama zamanı (aynı ilk istekli iki konuşma çakışırsa
+// kontrol gevşer, sıkılaşmaz).
+const SEARCH_LEDGER_TTL_MS = 60 * 60_000;
+const searchLedger = new Map();
+function conversationKey(messages) {
+    const first = messages.find((m) => m.role === 'user');
+    return first ? JSON.stringify(first.content).slice(0, 4_000) : null;
+}
+export function markSearched(messages) {
+    const key = conversationKey(messages);
+    if (!key)
+        return;
+    const now = Date.now();
+    for (const [k, t] of searchLedger)
+        if (now - t > SEARCH_LEDGER_TTL_MS)
+            searchLedger.delete(k);
+    searchLedger.set(key, now);
+}
+function bridgeSearched(messages) {
+    const key = conversationKey(messages);
+    const t = key ? searchLedger.get(key) : undefined;
+    return t !== undefined && Date.now() - t <= SEARCH_LEDGER_TTL_MS;
+}
+function claimed(draft, re) {
+    return draft.split(/(?<=[.!?\n])\s+/).some((sentence) => re.test(sentence) && !NEGATED.test(sentence));
+}
+/** Taslaktaki, konuşmada hiçbir aracın desteklemediği eylem iddiaları ("EYLEM: …" sorunları). */
+export function unbackedActionClaims(messages, draft) {
+    // Bütün konuşma: önceki bir turda yapılmış aramanın sonucuna atıf meşrudur (yanlış alarm olmasın).
+    const used = [];
+    for (const m of messages) {
+        if (m.role !== 'assistant' || typeof m.content === 'string')
+            continue;
+        for (const b of m.content)
+            if (b.type === 'tool_use')
+                used.push({ name: b.name, input: JSON.stringify(b.input ?? {}) });
+    }
+    const issues = [];
+    const searched = bridgeSearched(messages) || used.some((u) => SEARCH_TOOLS.test(u.name) || (u.name === 'Bash' && NET_IN_BASH.test(u.input)));
+    if (claimed(draft, SEARCH_CLAIM) && !searched) {
+        issues.push('EYLEM: Taslak web araması/araştırma yapıldığını ve sonuçlarını söylüyor, ama bu görevde WebSearch, WebFetch ya da tarayıcı aracı hiç çağrılmadı — önce aracı gerçekten çağır, sonucu onun çıktısından yaz');
+    }
+    if (claimed(draft, FILE_CLAIM) && !used.some((u) => WRITE_TOOLS.test(u.name))) {
+        issues.push('EYLEM: Taslak bir dosyanın oluşturulduğunu/kaydedildiğini söylüyor, ama bu görevde dosya yazan hiçbir araç (Write, Edit, Bash) çağrılmadı — dosyayı gerçekten oluştur ya da oluşturmadığını açıkça söyle');
+    }
+    const skill = unloadedRequestedSkill(messages, used);
+    if (skill) {
+        issues.push(`EYLEM: Kullanıcı \`${skill}\` skill'ini adıyla istedi ama Skill aracı bu adla hiç çağrılmadı (skill'ler ToolSearch'te görünmez; uydurma alt-ad "Unknown skill" verir) — Skill aracını skill: "${skill}" ile BİREBİR çağır, yüklenen talimata göre işi yap`);
+    }
+    return issues;
+}
+// SKILL-NAME-1 (2026-11-27 skill taraması): Gemini istenen skill yerine `firecrawl-cli:scrape`,
+// `superpowers:explore` gibi uydurma adlar çağırdı ya da skill'i ToolSearch'te arayıp "skill
+// bulunamadı" dedi. İstekte adı geçen skill ile Skill aracı hiç çağrılmadıysa sorun üretilir.
+// Aynı adla çağrılıp hata dönmesi (gerçekten yok / yalnız kullanıcı çağırabilir) meşrudur.
+const SKILL_NAME = /^[a-z0-9][a-z0-9-]*(?::[a-z0-9][a-z0-9-]*)?$/i;
+function requestedSkills(request) {
+    if (!/\bskill/i.test(request))
+        return [];
+    const names = new Set();
+    for (const m of request.matchAll(/`([^`\s]+)`\s*(?:skill|adl[ıi]\s+skill)/gi))
+        names.add(m[1]);
+    for (const m of request.matchAll(/(?:^|[\s(])([a-z0-9][\w-]*:[\w-]+|[a-z0-9][\w-]*-[\w-]+)\s+skill/gi))
+        names.add(m[1]);
+    return [...names].filter((n) => SKILL_NAME.test(n));
+}
+function unloadedRequestedSkill(messages, used) {
+    const req = findRequest(messages);
+    if (!req)
+        return null;
+    const called = used.filter((u) => u.name === 'Skill').map((u) => {
+        try {
+            return String(JSON.parse(u.input).skill ?? '').replace(/^\//, '');
+        }
+        catch {
+            return '';
+        }
+    });
+    // Ad alanı yalnız bir tarafta yazılmışsa (`deep-research` ↔ `anthropic-skills:deep-research`) kısa ad karşılaştırılır.
+    const same = (a, b) => {
+        const [x, y] = [a.toLowerCase(), b.toLowerCase()];
+        if (x === y)
+            return true;
+        return x.includes(':') !== y.includes(':') && x.split(':').pop() === y.split(':').pop();
+    };
+    return requestedSkills(req.text).find((n) => !called.some((c) => same(c, n))) ?? null;
 }
 export const REVIEW_SYSTEM_PROMPT = 'You are a strict senior reviewer. An AI assistant wrote a DRAFT answer to the user\'s request using the ' +
     'EVIDENCE it gathered with tools. Find substantive gaps before the user sees it.\n' +
@@ -128,7 +230,9 @@ export function buildFeedback(issues) {
     return ('[REVIEW NOTE — internal quality check, not written by the user] Your draft answer missed or got wrong ' +
         'these items from the evidence/request:\n' +
         issues.map((i) => `- ${i}`).join('\n') +
-        '\nFor ARAŞTIRMA items, make the tool calls needed to check before answering. Then write the COMPLETE final ' +
+        '\nNever say you searched the web, read a page or created a file unless that tool call really happened in this task.' +
+        '\nFor ARAŞTIRMA and EYLEM items, make the tool calls needed before answering (EYLEM: the action you described ' +
+        'was never performed — actually call the tool now). Then write the COMPLETE final ' +
         'answer for the user again, in the same language: keep everything that was correct and make sure EVERY item ' +
         'listed above appears in it, unless the evidence contradicts that item. Do not mention this review.');
 }
@@ -352,6 +456,30 @@ export async function rewriteFromEvidence(messages, draft, issues, rewrite = cla
         return null;
     }
 }
+/**
+ * GUARD-REV-1 (2026-11-27 skill taraması, sales:forecast): denetçinin düzeltme turundan dönen
+ * metin yeniden "web araması sonuçlarına göre…" diye arama uydurdu; düzeltme turu tek olduğu için
+ * kontrol edilmeden gitti. Son metin deterministik kontrolden geçer: desteksiz iddia varsa Claude
+ * kanıttan yeniden yazar; o da yoksa iddia cümleleri metinden çıkarılır.
+ */
+export async function guardRevision(messages, revised, rewrite = claudeRewriter) {
+    const used = messages.filter((m) => m.role === 'assistant' && typeof m.content !== 'string')
+        .flatMap((m) => m.content.filter((b) => b.type === 'tool_use'));
+    const searched = bridgeSearched(messages) || used.some((b) => b.type === 'tool_use' && (SEARCH_TOOLS.test(b.name) || (b.name === 'Bash' && NET_IN_BASH.test(JSON.stringify(b.input ?? {})))));
+    const wrote = used.some((b) => b.type === 'tool_use' && WRITE_TOOLS.test(b.name));
+    const bad = (sentence) => !NEGATED.test(sentence)
+        && ((!searched && SEARCH_CLAIM.test(sentence)) || (!wrote && FILE_CLAIM.test(sentence)));
+    const sentences = revised.split(/(?<=[.!?\n])\s+/);
+    if (!sentences.some(bad))
+        return revised;
+    const issues = ['ÇELİŞKİ: Metin bu görevde hiç yapılmamış bir eylemi (web araması/dosya oluşturma) yapılmış gibi anlatıyor; o iddiayı ve ona dayandırılan bilgileri kaldır, yapılmadığını açıkça söyle'];
+    const fixed = await rewriteFromEvidence(messages, revised, issues, rewrite);
+    if (fixed && !fixed.split(/(?<=[.!?\n])\s+/).some(bad))
+        return fixed;
+    logger.warn('Düzeltme sonrası desteksiz eylem iddiası — ilgili cümleler çıkarıldı');
+    return sentences.filter((x) => !bad(x)).join(' ').trim()
+        || `${revised}\n\n(Not: bu görevde web araması ya da dosya işlemi gerçekten yapılmadı; yukarıdaki bilgiler doğrulanmamıştır.)`;
+}
 /** Model adı "claude:<model>" ise Claude CLI, değilse Gemini Live denetçi. */
 export const defaultCritic = (model, prompt) => model.startsWith('claude:') ? claudeCritic(model.slice('claude:'.length), prompt) : liveCritic(model, prompt);
 /**
@@ -362,6 +490,11 @@ export async function runReview(messages, draft, critic = defaultCritic) {
     const cfg = getConfig();
     if (!cfg.reviewEnabled || draft.trim().length < DRAFT_MIN_CHARS)
         return null;
+    const unbacked = unbackedActionClaims(messages, draft);
+    if (unbacked.length) {
+        logger.info(`Denetçi (deterministik): ${unbacked.length} desteksiz eylem iddiası`);
+        return unbacked;
+    }
     const input = extractReviewInput(messages);
     if (!input)
         return null;
@@ -417,7 +550,9 @@ export async function reviewStateless(messages, result, regenerate, critic = def
             { role: 'assistant', content: result.text },
             { role: 'user', content: buildFeedback(issues) },
         ]);
-        return revised.text.trim() || revised.toolCalls.length > 0 ? revised : result;
+        if (revised.toolCalls.length > 0)
+            return revised;
+        return revised.text.trim() ? { ...revised, text: await guardRevision(messages, revised.text) } : result;
     }
     catch (err) {
         logger.warn(`REST denetimi atlandı (taslak gönderiliyor): ${err.message}`);

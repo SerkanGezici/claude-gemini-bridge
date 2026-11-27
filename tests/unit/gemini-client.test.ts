@@ -485,6 +485,33 @@ describe('streamFromGemini — recovery & invariant', () => {
     captured!.onmessage({ serverContent: { generationComplete: true } });
     await expect(promise).resolves.toBeUndefined();
   });
+
+  it('SEARCH-MIX-1: karışık batch → Claude Code yalnız normal aracı görür; arama sonucu onun cevabıyla birleşir', async () => {
+    mockGenerateContent.mockResolvedValue({ text: 'web sonucu', candidates: [] });
+    const cbs = { ...noopCallbacks(), onWebSearch: vi.fn() };
+    const promise = startG3(cbs);
+    await flush();
+    captured!.onmessage({ setupComplete: true });
+    captured!.onmessage({
+      toolCall: { functionCalls: [
+        { name: 'ToolSearch', id: 'ts_1', args: { query: 'select:WebSearch' } },
+        { name: 'web_search', id: 'ws_2', args: { query: 'pazar' } },
+      ] },
+    });
+    await promise;
+    const forwarded = vi.mocked(cbs.onToolCall).mock.calls[0]![0];
+    expect(forwarded.map((c) => c.name)).toEqual(['ToolSearch']);
+    expect(cbs.onWebSearch).toHaveBeenCalled(); // SEARCH-LEDGER-1: denetçi aramayı bilsin
+    const cont = sendToolResponse([{ id: 'ts_1', name: 'ToolSearch', response: { result: 'ok' } }], noopCallbacks());
+    await flush();
+    const sent = fakeSession.sendToolResponse.mock.calls.at(-1)![0] as {
+      functionResponses: Array<{ id: string; response: Record<string, unknown> }>;
+    };
+    expect(sent.functionResponses.map((r) => r.id)).toEqual(['ts_1', 'ws_2']);
+    expect(sent.functionResponses[1]!.response).toHaveProperty('result', 'web sonucu');
+    captured!.onmessage({ serverContent: { generationComplete: true } });
+    await expect(cont).resolves.toBeUndefined();
+  });
 });
 
 // ── RETRY-1: reconnectSession transient retry (LIVE-7 yolu) ──

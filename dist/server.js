@@ -7,7 +7,7 @@ import { logger } from './logger.js';
 import { REQUESTS_DIR } from './paths.js';
 import { buildSystemPrompt, toGeminiTurns, flattenTurnsToSingleUser, scrubFlattenMarkers, LIVE_TOOL_RESULT_MAX_CHARS, TURNS_BYTE_BUDGET } from './transformer.js';
 import { streamFromGemini, sendToolResponse, hasToolSession, retireToolSessionIfToolsChanged, isGemini3, resolveActiveModel, markModelDegraded } from './gemini-client.js';
-import { runReview, buildFeedback, reviewStateless, rewriteFromEvidence } from './reviewer.js';
+import { runReview, buildFeedback, reviewStateless, rewriteFromEvidence, isCompactionRequest, guardRevision, markSearched } from './reviewer.js';
 import { toGeminiFunctionDeclarations, toAnthropicToolUse, toGeminiToolId, detectToolResults, parseTextToolCall, findToolName, toolResultText, } from './tool-mapper.js';
 import { generateMessageId } from './stream-converter.js';
 import { tableToImages } from './table-image.js';
@@ -95,6 +95,8 @@ export function stripThoughtBlock(text) {
 // check the file: ..." diye DEVAM ederse uzun olur, eşleşmez — false positive yok).
 const FILLER_ONLY_PATTERN = /^[\s"'`*]*(let me (check|see|take a look|look)|one moment|checking|hold on|bir (bakay[ıi]m|saniye)|kontrol ediyorum|bakıyorum)[\s.!…]*$/i;
 const FILLER_HOLD_CHARS = 24;
+export const FILLER_ISSUE = 'EYLEM: Cevabın yalnız bir dolgu cümlesi ya da boş ("Let me check") — iş bitmedi. Araç sonucunu kullanıp ' +
+    'görevin sonraki adımını şimdi yap: gereken aracı çağır ya da kullanıcıya nihai, somut cevabı yaz';
 /** Metin boş VEYA sadece içeriksiz filler ise işe yaramaz turn'dür (tool yoksa). */
 export function isUselessTurn(text, hasToolCalls) {
     if (hasToolCalls)
@@ -351,7 +353,7 @@ export async function startBridge() {
             return handleNonStreaming(body, systemPrompt, turns, geminiTools, reply, route.lane);
         }
         // Streaming SSE
-        await handleStreaming(body, systemPrompt, turns, geminiTools, reply, route.lane);
+        await handleStreaming(body, systemPrompt, turns, geminiTools, reply, route.lane, hasToolResults && getConfig().reviewEnabled && !isCompactionRequest(body.messages));
     });
     const actualPort = await listenWithFallback(app, config.host, config.port, !config.portExplicit);
     logger.info(`Bridge listening on http://${config.host}:${actualPort}`);
@@ -423,12 +425,26 @@ function sendRestResult(body, result, reply) {
     writer.end();
 }
 // ── Streaming Handler ───────────────────────────────────────
-async function handleStreaming(body, systemPrompt, turns, geminiTools, reply, lane = 'quality') {
+async function handleStreaming(body, systemPrompt, turns, geminiTools, reply, lane = 'quality', reviewReplay = false) {
     reply.hijack();
     const writer = new SSEWriter(reply.raw);
     writer.writeHead();
     const messageId = generateMessageId();
     let isFirstTextChunk = true;
+    // REVIEW-REPLAY-1: oturumu kapanmış araç devamı (full replay) da denetlenir — son metin
+    // tamponlanır; model tool call yaparsa tampon hemen akar (denetim yok).
+    let buffering = reviewReplay;
+    let draft = '';
+    const emit = (t) => { if (buffering)
+        draft += t;
+    else
+        writer.emitText(t); };
+    const flush = () => { if (buffering) {
+        buffering = false;
+        if (draft)
+            writer.emitText(draft);
+        draft = '';
+    } };
     // message_start her zaman ilk gider — input token tahmini Claude Code'un
     // context göstergesi/auto-compact'i için gerekli (0 gönderilirse bozulur)
     writer.messageStart(messageId, body.model, reportedInputTokens(body.messages));
@@ -442,6 +458,8 @@ async function handleStreaming(body, systemPrompt, turns, geminiTools, reply, la
             }
             writer.resetTurnState();
             isFirstTextChunk = true;
+            buffering = reviewReplay;
+            draft = '';
             // LIVE-20: model "[tool_use: ...]" notasyonunu metin olarak yazabiliyor
             // (flatten taklidi) — marker görülünce SSE'ye yazmadan tampona al; turn
             // sonunda gerçek tool_use'a çevrilir ya da düz metin olarak akıtılır.
@@ -456,12 +474,12 @@ async function handleStreaming(body, systemPrompt, turns, geminiTools, reply, la
                 }
                 const markerIdx = filtered.indexOf('[tool_use:');
                 if (markerIdx !== -1) {
-                    writer.emitText(filtered.slice(0, markerIdx));
+                    emit(filtered.slice(0, markerIdx));
                     fakeToolMode = true;
                     fakeToolBuf = filtered.slice(markerIdx);
                     return;
                 }
-                writer.emitText(filtered);
+                emit(filtered);
             };
             // LIVE-19 + ROUTE-1: aktif model attempt + ŞERİT başına çözülür —
             // 1011 sonrası retry otomatik olarak fallback/quality modele gider.
@@ -500,9 +518,11 @@ async function handleStreaming(body, systemPrompt, turns, geminiTools, reply, la
                         if (h)
                             route(h);
                     }
+                    flush();
                     writer.emitToolCalls(toolCalls.map(toAnthropicToolUse));
                 },
                 // Kapanış event'leri await sonrasında yazılır (empty-turn retry için)
+                onWebSearch: () => markSearched(body.messages),
                 onTurnComplete: () => { },
                 onError: (error) => {
                     logger.error('Stream retry attempt failed', error.message);
@@ -530,11 +550,12 @@ async function handleStreaming(body, systemPrompt, turns, geminiTools, reply, la
                 const known = parsed && (body.tools ?? []).some((t) => t.name === parsed.name);
                 if (parsed && known) {
                     logger.info(`Converted fake tool-call text into a real tool_use: ${parsed.name}`);
-                    writer.emitText(parsed.before);
+                    emit(parsed.before);
+                    flush();
                     writer.emitToolCalls([{ id: `toolu_fctext_${Date.now()}`, name: parsed.name, input: parsed.input }]);
                 }
                 else {
-                    writer.emitText(fakeToolBuf);
+                    emit(fakeToolBuf);
                 }
                 fakeToolMode = false;
                 fakeToolBuf = '';
@@ -544,7 +565,7 @@ async function handleStreaming(body, systemPrompt, turns, geminiTools, reply, la
             // LIVE-23: primary boş dönüyorsa fallback'e geç (sonraki attempt 2.5'e gider).
             // ROUTE-1a: background şeridinde boş dönen lane modeli bloklanır →
             // resolveLaneModel sonraki attempt'te quality yoluna düşer.
-            if (!writer.hasToolCalls && writer.totalChars === 0) {
+            if (!writer.hasToolCalls && writer.totalChars === 0 && !draft.trim()) {
                 const cfg = getConfig();
                 if (activeModel === cfg.geminiModel || (lane === 'background' && activeModel === cfg.laneBackgroundModel)) {
                     markModelDegraded('empty turn', Date.now(), activeModel);
@@ -552,6 +573,10 @@ async function handleStreaming(body, systemPrompt, turns, geminiTools, reply, la
                 throw Object.assign(new Error('Gemini empty turn'), { emptyTurn: true });
             }
         });
+        if (buffering && !writer.hasToolCalls && draft) {
+            await reviewReplayDraft(body, systemPrompt, turns, geminiTools, lane, draft, writer);
+            draft = '';
+        }
         // Başarılı turn (tool yoksa) — stream'i kapat
         if (!writer.hasToolCalls) {
             writer.endTurn();
@@ -559,6 +584,11 @@ async function handleStreaming(body, systemPrompt, turns, geminiTools, reply, la
     }
     catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
+        // Denetim sırasında hata: tamponlanmış taslak kaybolmaz.
+        if (buffering && draft && !writer.hasToolCalls) {
+            writer.emitText(draft);
+            draft = '';
+        }
         // Retry'lara rağmen empty turn — hata yerine boş mesajla zarif kapanış
         // (Claude Code error event'te isteği komple başarısız sayar).
         if (error instanceof Error && error.emptyTurn) {
@@ -574,6 +604,78 @@ async function handleStreaming(body, systemPrompt, turns, geminiTools, reply, la
     }
     finally {
         writer.end();
+    }
+}
+// ── Anthropic JSON Yanıt Yardımcıları (TD-007) ──────────────
+/**
+ * FAKE-TOOL-2: metinde "[tool_use: X args=…]" notasyonu varsa ve X Claude Code'un araç
+ * listesindeyse gerçek tool_use olarak yazar (true). Değilse hiçbir şey yazmaz (false).
+ */
+function emitFakeToolCall(body, text, writer) {
+    const at = text.indexOf('[tool_use:');
+    if (at === -1)
+        return false;
+    const parsed = parseTextToolCall(text.slice(at));
+    if (!parsed || !(body.tools ?? []).some((t) => t.name === parsed.name))
+        return false;
+    logger.info(`Converted fake tool-call text into a real tool_use (review path): ${parsed.name}`);
+    const before = text.slice(0, at) + parsed.before;
+    if (before.trim())
+        writer.emitText(before);
+    writer.emitToolCalls([{ id: `toolu_fctext_${Date.now()}`, name: parsed.name, input: parsed.input }]);
+    return true;
+}
+/**
+ * REVIEW-REPLAY-1: replay yolundaki taslağın denetimi. Sorun yoksa taslak akar; Claude
+ * yeniden yazımı mümkünse o akar; değilse taslak + denetim notuyla tek bir Live düzeltme
+ * turu açılır (tool call yapabilir). Her hata yolunda taslak aynen gider (fail-open).
+ */
+async function reviewReplayDraft(body, systemPrompt, turns, geminiTools, lane, draft, writer) {
+    try {
+        const issues = await runReview(body.messages, draft);
+        if (!issues || issues.length === 0) {
+            writer.emitText(draft);
+            return;
+        }
+        const fixed = await rewriteFromEvidence(body.messages, draft, issues);
+        if (fixed) {
+            writer.emitText(fixed);
+            return;
+        }
+        logger.info(`Denetçi düzeltme turu (replay): ${issues.length} sorun`);
+        const extra = toGeminiTurns([
+            { role: 'assistant', content: draft },
+            { role: 'user', content: buildFeedback(issues) },
+        ]);
+        let text = '';
+        let first = true;
+        const model = resolveLaneModel(lane);
+        await streamFromGemini({ systemPrompt, turns: [...turns, ...extra], tools: geminiTools, model }, {
+            onText: (t) => { const f = scrubFlattenMarkers(filterThinkingText(t, first)); first = false; text += f; },
+            onToolCall: (calls) => {
+                if (text.trim()) {
+                    writer.emitText(text);
+                    text = '';
+                }
+                writer.emitToolCalls(calls.map(toAnthropicToolUse));
+            },
+            onWebSearch: () => markSearched(body.messages),
+            onTurnComplete: () => { },
+            onError: (e) => logger.warn(`Replay düzeltme turu hatası: ${e.message}`),
+        });
+        if (writer.hasToolCalls) {
+            if (text.trim())
+                writer.emitText(text);
+            return;
+        }
+        if (emitFakeToolCall(body, text, writer))
+            return;
+        writer.emitText(text.trim() && !isUselessTurn(text, false) ? await guardRevision(body.messages, text) : draft);
+    }
+    catch (err) {
+        logger.warn(`Replay denetimi atlandı (taslak gönderiliyor): ${err.message}`);
+        if (!writer.hasToolCalls)
+            writer.emitText(draft);
     }
 }
 function sendAnthropicMessage(reply, body, content, stopReason, fullTextLength, nTools) {
@@ -630,6 +732,7 @@ async function handleNonStreaming(body, systemPrompt, turns, geminiTools, reply,
                         toolCallBlocks.push(at);
                     }
                 },
+                onWebSearch: () => markSearched(body.messages),
                 onTurnComplete: () => { },
                 onError: (error) => {
                     logger.error('Non-streaming stream error', error.message);
@@ -767,6 +870,7 @@ async function handleToolResponseNonStreaming(body, toolResults, reply) {
                 for (const tc of toolCalls)
                     toolCallBlocks.push(toAnthropicToolUse(tc));
             },
+            onWebSearch: () => markSearched(body.messages),
             onTurnComplete: () => { },
             onError: (error) => {
                 logger.error('Tool response non-streaming error', error.message);
@@ -817,6 +921,7 @@ async function handleToolResponseStreaming(body, toolResults, reply) {
                 }
                 writer.emitToolCalls(toolCalls.map(toAnthropicToolUse));
             },
+            onWebSearch: () => markSearched(body.messages),
             onTurnComplete: () => {
                 if (writer.hasToolCalls || review)
                     return;
@@ -851,9 +956,20 @@ async function handleToolResponseStreaming(body, toolResults, reply) {
  * tool call) akar. Her hata yolunda taslak aynen gider (fail-open).
  */
 async function finishWithReview(body, draft, held, writer) {
+    // FAKE-TOOL-2 (2026-11-27 skill taraması, sales:customer-voice): açık oturum yolunda da model
+    // "[tool_use: ToolSearch args=…]" notasyonunu metin olarak yazıp turu kapattı (LIVE-20 yalnız
+    // replay yolundaydı). Bilinen araçsa gerçek tool_use'a çevrilir.
+    if (emitFakeToolCall(body, draft, writer)) {
+        held?.release();
+        return;
+    }
     let issues = null;
     try {
-        issues = held ? await runReview(body.messages, draft) : null;
+        // FILLER-FINAL-1 (2026-11-27 skill taraması): 3.x araç sonucundan sonra yalnız "Let me check"
+        // yazıp ya da hiç yazmadan turu kapattı (canvas-design, deep-research, built-in-browser).
+        issues = held && isUselessTurn(draft, false)
+            ? [FILLER_ISSUE]
+            : held ? await runReview(body.messages, draft) : null;
     }
     catch (err) {
         logger.warn(`Denetçi hatası — taslak denetimsiz gidiyor (${err.message})`);
@@ -889,6 +1005,7 @@ async function finishWithReview(body, draft, held, writer) {
                 }
                 writer.emitToolCalls(toolCalls.map(toAnthropicToolUse));
             },
+            onWebSearch: () => markSearched(body.messages),
             onTurnComplete: () => { },
             onError: (error) => logger.warn(`Denetçi düzeltme turu hatası: ${error.message}`),
         });
@@ -898,6 +1015,8 @@ async function finishWithReview(body, draft, held, writer) {
     }
     if (writer.hasToolCalls)
         return;
-    writer.emitText(revised.trim() ? revised : draft);
+    if (emitFakeToolCall(body, revised, writer))
+        return;
+    writer.emitText(revised.trim() ? await guardRevision(body.messages, revised) : draft);
     writer.endTurn();
 }

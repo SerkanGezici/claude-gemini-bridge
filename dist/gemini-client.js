@@ -385,9 +385,15 @@ function onToolCallMessage(handle, functionCalls) {
         void fulfillWebSearch(webSearchCalls, handle);
         return;
     }
+    // SEARCH-MIX-1 (2026-11-27 skill taraması): 3.x `ToolSearch + web_search`'ü sık sık aynı
+    // batch'te çağırıyor; web_search Claude Code'a düşünce "No such tool available: web_search".
+    // Arama köprüde hemen başlar, Claude Code yalnız normal araçları görür; sonuçlar onun
+    // cevabıyla tek toolResponse'ta birleşir (sendToolResponse).
     if (webSearchCalls.length > 0) {
-        logger.warn(`web_search karışık batch'te (${calls.length - webSearchCalls.length} normal tool ile) — ` +
-            'v1: intercept edilmedi, normal akışa bırakıldı');
+        logger.info(`web_search karışık batch'te (${calls.length - webSearchCalls.length} normal tool ile) — köprüde karşılanıyor`);
+        handle.callbacks.onWebSearch?.();
+        handle.pendingSearch = Promise.all(webSearchCalls.map(async (c) => ({ id: c.id, name: c.name, response: await handleWebSearch(c.args) })));
+        calls.splice(0, calls.length, ...calls.filter((c) => c.name !== 'web_search'));
     }
     clearTimeout(handle.timeoutId);
     handle.timeoutId = setTimeout(() => {
@@ -638,6 +644,9 @@ export async function sendToolResponse(toolResponses, callbacks, opts) {
     if (!handle) {
         throw new Error('No active Gemini session for tool response');
     }
+    const searched = handle.pendingSearch ? await handle.pendingSearch.catch(() => []) : [];
+    handle.pendingSearch = undefined;
+    const allResponses = [...toolResponses, ...searched];
     // Yeni HTTP isteğinin callback'lerini ve promise'ini handle'a bağla
     return new Promise((resolve, reject) => {
         handle.callbacks = callbacks;
@@ -665,7 +674,7 @@ export async function sendToolResponse(toolResponses, callbacks, opts) {
         recordUsage(handle.connectParams.model ?? getConfig().geminiModel, Math.ceil(JSON.stringify(toolResponses).length / 3.5));
         try {
             handle.session.sendToolResponse({
-                functionResponses: toolResponses.map((tr) => ({
+                functionResponses: allResponses.map((tr) => ({
                     id: tr.id,
                     name: tr.name,
                     response: tr.response,
@@ -705,6 +714,7 @@ export async function sendToolResponse(toolResponses, callbacks, opts) {
 async function fulfillWebSearch(calls, handle) {
     const functionResponses = [];
     for (const c of calls) {
+        handle.callbacks.onWebSearch?.();
         const response = await handleWebSearch(c.args);
         functionResponses.push({ id: c.id, name: c.name, response });
     }

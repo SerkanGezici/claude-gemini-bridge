@@ -2,7 +2,7 @@
 // fail-open model zinciri. Live denetçi enjekte edilen sahte fonksiyonla
 // taklit edilir (gerçek API'ye GİTMEZ).
 import { describe, it, expect, beforeEach, afterAll } from 'vitest';
-import { extractReviewInput, parseReview, runReview, buildFeedback, reviewStateless, isCompactionRequest, rewriteFromEvidence } from '../../src/reviewer.js';
+import { extractReviewInput, parseReview, runReview, buildFeedback, reviewStateless, isCompactionRequest, rewriteFromEvidence, guardRevision, unbackedActionClaims, markSearched } from '../../src/reviewer.js';
 import { resetConfig } from '../../src/config.js';
 import type { AnthropicMessage } from '../../src/types.js';
 
@@ -123,6 +123,114 @@ describe('runReview', () => {
     let called = false;
     expect(await runReview([{ role: 'user', content: 'merhaba' }], 'selam', async () => { called = true; return ''; })).toBeNull();
     expect(called).toBe(false);
+  });
+});
+
+// ACT-CLAIM-1: deep-research taramasındaki gerçek konuşmanın şekli (Skill + ToolSearch, arama yok).
+const skillConv: AnthropicMessage[] = [
+  { role: 'user', content: 'Skill aracıyla deep-research skill\'ini yükle ve uygula: 2026 Türkiye dizüstü pazarı' },
+  { role: 'assistant', content: [{ type: 'tool_use', id: 's1', name: 'Skill', input: { skill: 'anthropic-skills:deep-research' } }] },
+  { role: 'user', content: [{ type: 'tool_result', tool_use_id: 's1', content: 'Launching skill' }] },
+  { role: 'assistant', content: [{ type: 'tool_use', id: 's2', name: 'ToolSearch', input: { query: 'select:WebSearch' } }] },
+  { role: 'user', content: [{ type: 'tool_result', tool_use_id: 's2', content: '' }] },
+];
+const FAKE = "Skill'in ilk adımı olarak web araması gerçekleştirildi. Arama sonuçlarına göre HP, Lenovo ve Dell öne çıkıyor.";
+
+describe('ACT-CLAIM-1 unbackedActionClaims', () => {
+  it('arama aracı hiç çağrılmadan "web araması yapıldı" → EYLEM sorunu', () => {
+    const issues = unbackedActionClaims(skillConv, FAKE);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toMatch(/^EYLEM:.*WebSearch/);
+  });
+  it('WebSearch gerçekten çağrıldıysa sorun yok', () => {
+    const withSearch: AnthropicMessage[] = [...skillConv,
+      { role: 'assistant', content: [{ type: 'tool_use', id: 's3', name: 'WebSearch', input: { query: 'x' } }] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 's3', content: 'sonuç' }] }];
+    expect(unbackedActionClaims(withSearch, FAKE)).toEqual([]);
+  });
+  it('önceki turda yapılmış aramaya atıf yanlış alarm değildir', () => {
+    const earlier: AnthropicMessage[] = [
+      { role: 'user', content: 'pazarı araştır' },
+      { role: 'assistant', content: [{ type: 'tool_use', id: 'e1', name: 'WebSearch', input: { query: 'pazar' } }] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'e1', content: 'HP Lenovo' }] },
+      { role: 'assistant', content: 'HP ve Lenovo önde.' },
+      ...skillConv];
+    expect(unbackedActionClaims(earlier, FAKE)).toEqual([]);
+  });
+  it('SEARCH-LEDGER-1: aramayı köprü kendisi yaptıysa (geçmişte görünmez) iddia desteklidir', () => {
+    const conv2: AnthropicMessage[] = [{ role: 'user', content: 'ledger testi: pazarı araştır' }, ...skillConv.slice(1)];
+    expect(unbackedActionClaims(conv2, FAKE)).toHaveLength(1);
+    markSearched(conv2);
+    expect(unbackedActionClaims(conv2, FAKE)).toEqual([]);
+    expect(extractReviewInput(conv2)?.evidence).toMatch(/BRIDGE NOTE/);
+  });
+  it('çekimli biçimler de iddiadır ("Arama sonucunda", "yaptığım aramada")', () => {
+    expect(unbackedActionClaims(skillConv, "Arama sonucunda Lenovo, HP ve Dell öne çıkıyor.")[0]).toMatch(/^EYLEM:/);
+    expect(unbackedActionClaims(skillConv, 'Yaptığım aramada firma bulunamadı.')[0]).toMatch(/^EYLEM:/);
+  });
+  it('olumsuz cümle ("arama yapamadım") iddia değildir', () => {
+    expect(unbackedActionClaims(skillConv, 'Web araması yapamadım çünkü araç yok; bilgiyi doğrulayamıyorum.')).toEqual([]);
+  });
+  it('dosya yazan araç olmadan "rapor.docx oluşturuldu" → EYLEM sorunu; Write varsa yok', () => {
+    expect(unbackedActionClaims(skillConv, 'rapor.docx dosyası oluşturuldu ve kaydedildi.')[0]).toMatch(/^EYLEM:.*dosya/);
+    const withWrite: AnthropicMessage[] = [...skillConv,
+      { role: 'assistant', content: [{ type: 'tool_use', id: 'w', name: 'Write', input: { file_path: 'rapor.docx' } }] }];
+    expect(unbackedActionClaims(withWrite, 'rapor.docx dosyası oluşturuldu.')).toEqual([]);
+  });
+  it('runReview desteksiz iddiada denetçi modelini çağırmadan EYLEM döndürür', async () => {
+    let called = false;
+    const issues = await runReview(skillConv, FAKE, async () => { called = true; return 'TAMAM'; });
+    expect(called).toBe(false);
+    expect(issues?.[0]).toMatch(/^EYLEM:/);
+  });
+  it('EYLEM, Claude yeniden yazımına değil araç çağırabilen Gemini turuna gider', async () => {
+    expect(await rewriteFromEvidence(skillConv, FAKE, ['EYLEM: x'], async () => 'yazıldı')).toBeNull();
+    expect(buildFeedback(['EYLEM: x'])).toMatch(/EYLEM.*actually call the tool/);
+  });
+});
+
+// SKILL-NAME-1: taramadaki gerçek şekiller (uydurma alt-ad, ToolSearch'te skill arama).
+describe('SKILL-NAME-1 istenen skill hiç yüklenmedi', () => {
+  const ask = (skill: string, calls: Array<[string, string, boolean]>): AnthropicMessage[] => [
+    { role: 'user', content: `Skill aracıyla \`${skill}\` skill'ini yükle ve uygula: örnek iş` },
+    ...calls.flatMap(([id, name, err]): AnthropicMessage[] => [
+      { role: 'assistant', content: [{ type: 'tool_use', id, name: name.startsWith('TS:') ? 'ToolSearch' : 'Skill', input: name.startsWith('TS:') ? { query: name.slice(3) } : { skill: name } }] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: err ? `Unknown skill: ${name}` : 'Launching skill', is_error: err }] },
+    ]),
+  ];
+  const DRAFT = 'Skill bulunamadı; işi elle yaptım.';
+  it('uydurma alt-ad (firecrawl-cli:scrape) → EYLEM, doğru adı söyler', () => {
+    const issues = unbackedActionClaims(ask('firecrawl-cli', [['a', 'firecrawl-cli:scrape', true]]), DRAFT);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toMatch(/^EYLEM:.*skill: "firecrawl-cli"/);
+  });
+  it('Skill yerine ToolSearch ile arama → EYLEM', () => {
+    expect(unbackedActionClaims(ask('sales:team-pipeline', [['a', 'TS:select:sales:team-pipeline', false]]), DRAFT)[0]).toMatch(/sales:team-pipeline/);
+  });
+  it('istenen adla çağrıldıysa (hata dönse bile) sorun yok', () => {
+    expect(unbackedActionClaims(ask('graphify', [['a', 'graphify', true]]), DRAFT)).toEqual([]);
+    expect(unbackedActionClaims(ask('sales:forecast', [['a', 'sales:forecast', false]]), 'Tahmin hazır.')).toEqual([]);
+  });
+  it('ad alanı tek tarafta yazılmışsa eşleşir; skill geçmeyen istekte kontrol yok', () => {
+    expect(unbackedActionClaims(ask('deep-research', [['a', 'anthropic-skills:deep-research', false]]), 'Hazır.')).toEqual([]);
+    expect(unbackedActionClaims([{ role: 'user', content: 'kod-review dosyasını oku' }], 'Okudum.')).toEqual([]);
+  });
+});
+
+describe('GUARD-REV-1 guardRevision', () => {
+  it('desteksiz iddia yoksa metin aynen döner (yeniden yazım çağrılmaz)', async () => {
+    let called = false;
+    expect(await guardRevision(skillConv, 'Tahmin: Q1 200k (varsayım).', async () => { called = true; return 'x'; })).toBe('Tahmin: Q1 200k (varsayım).');
+    expect(called).toBe(false);
+  });
+  it('düzeltmede arama uydurulduysa Claude yeniden yazar', async () => {
+    process.env['REVIEW_MODELS'] = 'claude:sonnet,models/a'; resetConfig();
+    expect(await guardRevision(skillConv, FAKE, async () => 'Arama yapmadım; varsayımla: HP önde olabilir.')).toBe('Arama yapmadım; varsayımla: HP önde olabilir.');
+  });
+  it('yeniden yazım da uydurursa iddia cümleleri çıkarılır', async () => {
+    const out = await guardRevision(skillConv, `${FAKE} Tahmin varsayımdır.`, async () => FAKE);
+    expect(out).not.toMatch(/web araması/i);
+    expect(out).toContain('Tahmin varsayımdır.');
   });
 });
 

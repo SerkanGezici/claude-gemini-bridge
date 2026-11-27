@@ -6,19 +6,17 @@
 //   npx tsx tests/eval/run-eval.ts --target bridge [--model models/gemini-3.8-live] [--only W1,W9] [--label x] [--repeat 3]
 // Bridge hedefi GEMINI_API_KEY'i ortamdan alır. Her görev geçici bir sandbox
 // kopyasında çalışır; repo dosyalarına dokunulmaz.
-import { spawn, execFileSync, type ChildProcess } from 'child_process';
+import { spawn, execFileSync } from 'child_process';
 import { cpSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { TASKS, type EvalTask, type Grade } from './tasks.js';
 import { buildClaudeArgs } from '../../src/claude-args.js';
+import { REPO, startBridge as startBridgeAt, stopBridge, bridgeEnv } from './bridge-harness.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const REPO = join(HERE, '..', '..');
 const PORT = 8031;
-const TOKEN = 'eval-token';
-const BASE = `http://127.0.0.1:${PORT}`;
 const TASK_TIMEOUT_MS = 420_000;
 
 function arg(name: string): string | undefined {
@@ -34,33 +32,6 @@ const label = arg('label') ?? (target === 'bridge' ? model.replace('models/', ''
 // EVAL-VAR-1: tek koşu karşılaştırma için yetmez (aynı kodda W9 30→76sn) → her görev N kez.
 const repeat = Math.max(1, Number(arg('repeat') ?? 1));
 
-let bridge: ChildProcess | null = null;
-
-async function startBridge(): Promise<void> {
-  // Anahtar ortamda yoksa köprü kendi kayıtlı anahtarını (~/.config/claude-gemini-bridge/.env) kullanır.
-  bridge = spawn('npx', ['tsx', 'src/index.ts', '--bridge-only'], {
-    cwd: REPO,
-    detached: true,
-    env: { ...process.env, PORT: String(PORT), BRIDGE_TOKEN: TOKEN, DEBUG: process.env['EVAL_DEBUG'] ?? 'false', GEMINI_MODEL: model },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  // Pipe'ı boşalt (dolarsa köprü yazarken bloklanır); log dosyası zaten var.
-  bridge.stdout?.on('data', () => {});
-  bridge.stderr?.on('data', (d: Buffer) => process.stderr.write(`[bridge] ${d}`));
-  const deadline = Date.now() + 120_000;
-  while (Date.now() < deadline) {
-    try { if ((await fetch(`${BASE}/health`)).ok) return; } catch { /* açılıyor */ }
-    await new Promise((r) => setTimeout(r, 500));
-  }
-  throw new Error('bridge health timeout');
-}
-
-function stopBridge(): void {
-  if (bridge?.pid) {
-    try { process.kill(-bridge.pid, 'SIGTERM'); } catch { /* zaten kapalı */ }
-  }
-}
-
 function makeSandbox(fixtures: string): string {
   const dir = mkdtempSync(join(tmpdir(), 'orch0-'));
   cpSync(join(REPO, 'tests', 'workspace'), dir, { recursive: true });
@@ -71,14 +42,8 @@ function makeSandbox(fixtures: string): string {
 interface ClaudeResult { text: string; numTurns?: number; isError: boolean; raw: string }
 
 function runClaude(prompt: string, cwd: string, mcp = false): Promise<ClaudeResult> {
-  const env: NodeJS.ProcessEnv = { ...process.env };
-  if (target === 'bridge') {
-    env['ANTHROPIC_BASE_URL'] = BASE;
-    env['ANTHROPIC_API_KEY'] = TOKEN;
-    delete env['ANTHROPIC_AUTH_TOKEN'];
-  } else {
-    delete env['ANTHROPIC_BASE_URL'];
-  }
+  const env: NodeJS.ProcessEnv = target === 'bridge' ? bridgeEnv(PORT) : { ...process.env };
+  if (target !== 'bridge') delete env['ANTHROPIC_BASE_URL'];
   return new Promise((resolve) => {
     // Köprü hedefi gerçek `claude-gemini` ile AYNI argümanları alır
     // (buildClaudeArgs: davranış katmanı OCR-1/RECOVER-1/SKILL-GUARD + plugin
@@ -117,7 +82,7 @@ async function main(): Promise<void> {
   execFileSync('python3', [join(HERE, 'gen_fixtures.py'), fixtures], { encoding: 'utf8' });
   execFileSync('python3', [join(HERE, 'gen_fixtures2.py'), fixtures], { encoding: 'utf8' }); // EVAL-2
   const tasks: EvalTask[] = only ? TASKS.filter((t) => only.includes(t.id)) : TASKS;
-  if (target === 'bridge') await startBridge();
+  if (target === 'bridge') await startBridgeAt(PORT, model);
 
   const rows: Row[] = [];
   try {
